@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Counter Timer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: rgb(15, 23, 41);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+            touch-action: manipulation;
+        }
+
+        #app {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            padding: 20px;
+        }
+
+        .counter {
+            font-size: 120px;
+            font-weight: bold;
+            text-align: center;
+            transition: transform 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+
+        .counter.static {
+            color: white;
+            cursor: pointer;
+        }
+
+        .counter-input {
+            font-size: 120px;
+            font-weight: bold;
+            color: cyan;
+            background: none;
+            border: none;
+            outline: none;
+            text-align: center;
+            width: 100%;
+            max-width: 500px;
+        }
+
+        .counter-input::-webkit-outer-spin-button,
+        .counter-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .time-box {
+            margin-top: 40px;
+            padding: 20px 32px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 28px;
+            backdrop-filter: blur(10px);
+        }
+
+        .interval-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+
+        .interval {
+            font-size: 44px;
+            font-weight: bold;
+            color: white;
+            transition: opacity 0.25s ease-out;
+        }
+
+        .compare {
+            font-size: 32px;
+            font-weight: 600;
+            transition: color 0.25s ease-out, opacity 0.25s ease-out;
+        }
+
+        .avg5 {
+            font-size: 26px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.7);
+            text-align: center;
+            transition: opacity 0.25s ease-out;
+        }
+
+        .spacer {
+            flex: 1;
+        }
+
+        #confetti-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+
+
+        .number-transition {
+            display: inline-block;
+            transition: transform 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="spacer"></div>
+        
+        <div id="counter-container">
+            <input 
+                type="number" 
+                id="counter-input" 
+                class="counter counter-input" 
+                value="100"
+                inputmode="numeric"
+            >
+            <div id="counter-display" class="counter static" style="display: none;">100</div>
+        </div>
+
+        <div class="time-box">
+            <div class="interval-row">
+                <div id="interval" class="interval">0.0 s</div>
+                <div id="compare" class="compare" style="color: gray;">= 0.0s</div>
+            </div>
+            <div id="avg5" class="avg5">Avg5  0.0 s</div>
+        </div>
+
+        <div class="spacer"></div>
+        
+        <canvas id="confetti-canvas"></canvas>
+    </div>
+
+    <script>
+        const state = {
+            counter: 100,
+            isEditing: true,
+            lastTap: null,
+            previousInterval: null,
+            interval: 0,
+            recentIntervals: [],
+            particles: [],
+            colorChangeTick: 0
+        };
+
+        const elements = {
+            input: document.getElementById('counter-input'),
+            display: document.getElementById('counter-display'),
+            interval: document.getElementById('interval'),
+            compare: document.getElementById('compare'),
+            avg5: document.getElementById('avg5'),
+            canvas: document.getElementById('confetti-canvas'),
+            app: document.getElementById('app')
+        };
+
+        const ctx = elements.canvas.getContext('2d');
+        
+        function resizeCanvas() {
+            elements.canvas.width = window.innerWidth;
+            elements.canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        function confirmInput() {
+            const value = parseInt(elements.input.value) || 100;
+            state.counter = value;
+            state.isEditing = false;
+            
+            elements.input.style.display = 'none';
+            elements.display.style.display = 'block';
+            elements.display.textContent = state.counter;
+            elements.input.blur();
+        }
+
+        function startEditing() {
+            if (!state.isEditing) {
+                state.isEditing = true;
+                elements.input.value = state.counter;
+                elements.input.style.display = 'block';
+                elements.display.style.display = 'none';
+                setTimeout(() => elements.input.focus(), 0);
+            }
+        }
+
+        function getAvg5() {
+            if (state.recentIntervals.length === 0) return 0;
+            return state.recentIntervals.reduce((a, b) => a + b, 0) / state.recentIntervals.length;
+        }
+
+        function confettiAmount(interval) {
+            const minInterval = 10.0;
+            const maxInterval = 120.0;
+            const minCount = 4;
+            const maxCount = 32;
+
+            const t = Math.max(minInterval, Math.min(interval, maxInterval));
+            const normalized = 1 - (t - minInterval) / (maxInterval - minInterval);
+            return Math.floor(minCount + normalized * (maxCount - minCount));
+        }
+
+        function spawnConfetti(x, y, count) {
+            const colors = [
+                '#00FFFF', '#FF69B4', '#FFFF00', '#9370DB', '#00FF00',
+                '#FF4500', '#FF1493', '#00CED1', '#FFD700', '#7FFF00',
+                '#FF6347', '#BA55D3', '#48D1CC'
+            ];
+            
+            const shapes = ['circle', 'square', 'triangle', 'star', 'heart', 'diamond', 'hexagon'];
+            
+            for (let i = 0; i < count; i++) {
+                const angle = (Math.random() * Math.PI * 2);
+                const speed = Math.random() * 4 + 3;
+                
+                state.particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 5,
+                    angle: Math.random() * Math.PI * 2,
+                    spin: (Math.random() - 0.5) * 0.8,
+                    shape: shapes[Math.floor(Math.random() * shapes.length)],
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    size: Math.random() * 4 + 4,
+                    life: 1,
+                    scale: 1
+                });
+            }
+
+            if (state.particles.length > 400) {
+                state.particles.splice(0, state.particles.length - 400);
+            }
+        }
+
+        function updateParticles() {
+            for (let p of state.particles) {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.22;
+                p.vx *= 0.98;
+                p.angle += p.spin;
+                p.life -= 0.012;
+                p.scale = Math.max(0.3, p.life);
+            }
+            state.particles = state.particles.filter(p => p.life > 0);
+        }
+
+        function drawParticles() {
+            ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+            
+            for (let p of state.particles) {
+                ctx.save();
+                ctx.globalAlpha = p.life;
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.angle);
+                ctx.scale(p.scale, p.scale);
+                
+                ctx.fillStyle = p.color;
+                ctx.strokeStyle = p.color;
+                ctx.lineWidth = 2;
+                
+                const s = p.size;
+                
+                switch(p.shape) {
+                    case 'circle':
+                        ctx.beginPath();
+                        ctx.arc(0, 0, s, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                    
+                    case 'square':
+                        ctx.fillRect(-s, -s, s*2, s*2);
+                        break;
+                    
+                    case 'triangle':
+                        ctx.beginPath();
+                        ctx.moveTo(0, -s);
+                        ctx.lineTo(s, s);
+                        ctx.lineTo(-s, s);
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    
+                    case 'star':
+                        ctx.beginPath();
+                        for (let i = 0; i < 5; i++) {
+                            const angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+                            const radius = i % 2 === 0 ? s : s / 2;
+                            const px = Math.cos(angle) * radius;
+                            const py = Math.sin(angle) * radius;
+                            if (i === 0) ctx.moveTo(px, py);
+                            else ctx.lineTo(px, py);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    
+                    case 'heart':
+                        ctx.beginPath();
+                        ctx.moveTo(0, s/2);
+                        ctx.bezierCurveTo(-s, -s/2, -s*1.5, s/2, 0, s*1.5);
+                        ctx.bezierCurveTo(s*1.5, s/2, s, -s/2, 0, s/2);
+                        ctx.fill();
+                        break;
+                    
+                    case 'diamond':
+                        ctx.beginPath();
+                        ctx.moveTo(0, -s);
+                        ctx.lineTo(s, 0);
+                        ctx.lineTo(0, s);
+                        ctx.lineTo(-s, 0);
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    
+                    case 'hexagon':
+                        ctx.beginPath();
+                        for (let i = 0; i < 6; i++) {
+                            const angle = (i * Math.PI) / 3;
+                            const px = Math.cos(angle) * s;
+                            const py = Math.sin(angle) * s;
+                            if (i === 0) ctx.moveTo(px, py);
+                            else ctx.lineTo(px, py);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        function shake() {
+            // Shake effect removed
+        }
+
+        function tap(x, y) {
+            if (state.counter <= 0) return;
+
+            const nowTap = Date.now();
+            let confettiCount = 4;
+
+            if (state.lastTap !== null) {
+                const diff = (nowTap - state.lastTap) / 1000;
+                state.interval = diff;
+
+                state.recentIntervals.push(diff);
+                if (state.recentIntervals.length > 5) {
+                    state.recentIntervals.shift();
+                }
+
+                const delta = state.previousInterval !== null ? diff - state.previousInterval : 0;
+                const absDelta = Math.abs(delta);
+
+                if (absDelta < 0.05) {
+                    elements.compare.textContent = `= ${absDelta.toFixed(1)}s`;
+                    elements.compare.style.color = 'gray';
+                } else if (delta > 0) {
+                    elements.compare.textContent = `↑ ${absDelta.toFixed(1)}s`;
+                    elements.compare.style.color = 'red';
+                } else {
+                    elements.compare.textContent = `↓ ${absDelta.toFixed(1)}s`;
+                    elements.compare.style.color = '#4169E1';
+                }
+
+                state.colorChangeTick++;
+                state.previousInterval = diff;
+
+                confettiCount = confettiAmount(diff);
+            }
+
+            state.lastTap = nowTap;
+            state.counter -= 1;
+            
+            elements.display.textContent = state.counter;
+            elements.interval.textContent = `${state.interval.toFixed(1)} s`;
+            elements.avg5.textContent = `Avg5  ${getAvg5().toFixed(1)} s`;
+            
+            shake();
+            
+            if (navigator.vibrate) {
+                navigator.vibrate(10);
+            }
+            
+            spawnConfetti(x, y, confettiCount);
+        }
+
+        elements.display.addEventListener('click', (e) => {
+            e.stopPropagation();
+            startEditing();
+        });
+        
+        elements.app.addEventListener('click', (e) => {
+            if (state.isEditing) {
+                if (e.target !== elements.input) {
+                    confirmInput();
+                }
+            } else {
+                if (e.target === elements.display) {
+                    return; // handled by display click listener
+                }
+                tap(e.clientX, e.clientY);
+            }
+        });
+
+        elements.app.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            const touch = e.changedTouches[0];
+            
+            if (state.isEditing) {
+                if (e.target !== elements.input) {
+                    confirmInput();
+                }
+            } else {
+                if (e.target !== elements.display) {
+                    tap(touch.clientX, touch.clientY);
+                }
+            }
+        });
+
+        elements.input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                confirmInput();
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !state.isEditing) {
+                e.preventDefault();
+                const x = Math.random() * window.innerWidth;
+                const y = Math.random() * window.innerHeight;
+                tap(x, y);
+            }
+        });
+
+        function animate() {
+            updateParticles();
+            drawParticles();
+            requestAnimationFrame(animate);
+        }
+        animate();
+
+        confirmInput();
+    </script>
+</body>
+</html>
